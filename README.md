@@ -13,11 +13,9 @@ Just clone this repository
 
 `node media.js` (by default will use first player returned by `playerctl`).
 
-You can specify your player by running it as `PLALYER=<name> node media.js` (Example for Spotify: `PLAYER=spotify node media.js`).
-
-You can see debug logs by running `DEBUG=true node media.js`.
-
-You can change the config folder by running it as `LYRICS_FOLDER=/path/to/folder node media.js`.
+- You can specify your player by running it as `PLALYER=<name> node media.js` (Example for Spotify: `PLAYER=spotify node media.js`).
+- You can see debug logs by running `DEBUG=true node media.js`.
+- You can change the config folder by running it as `LYRICS_FOLDER=/path/to/folder node media.js`.
 
 ### Flags
 
