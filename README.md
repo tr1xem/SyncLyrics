@@ -1,5 +1,8 @@
 # SyncLyrics
 
+> [!IMPORTANT]
+> Your Linux distro must support `playerctl`.
+
 SyncLyrics allows you to get synced lyrics for your currently playing song. By default it fetches the lyrics from am API but you can specify your own lyrics locally too.
 
 ## How to download?
@@ -41,7 +44,3 @@ Example:
 [00:23.32] 'Cause the sparks in the sky
 [00:25.51] Took a hold of your eyes while we spoke
 ```
-
-## Requirements
-
-Your Linux distro must support `playerctl`.
