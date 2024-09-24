@@ -3,6 +3,11 @@ const path = require("node:path");
 const { execSync } = require("node:child_process");
 
 const player = process.env.PLAYER || null;
+const lyricsFolder = process.env.LYRICS_FOLDER || path.join(
+	process.env.HOME,
+	".config",
+	"syncLyrics"
+);
 
 debugLog(`Using player: ${player || 'default'}`)
 
@@ -25,10 +30,14 @@ const noSong = template
 	.replace('{{class}}', 'none')
 	.replace('{{tooltip}}', 'none');
 
+const lyricsCacheDir = path.join(
+    process.env.HOME,
+    ".cache",
+    "syncLyrics"
+);
+
 const lyricsCacheFile = path.join(
-	process.env.HOME,
-	".cache",
-	"custom_commands",
+	lyricsCacheDir,
 	"lyrics.json",
 );
 
@@ -50,7 +59,7 @@ try {
         .trim()
         .split("|");
 
-	debugLog(`rawMetadata: ${rawMetadata}`)
+	debugLog(`rawMetadata: ${rawMetadata.join('|')}`)
 
 	volume = execSync(
 		`playerctl ${player ? `-p ${player}` : ''} volume`
@@ -102,6 +111,14 @@ if (process.argv.includes("--data") || process.argv.includes("-d")) {
 	process.exit(0);
 }
 
+if (process.argv.includes("--trackid") || process.argv.includes("-tid")) {
+    const trackId = parsedMetadata.trackId.split('/').pop()
+
+    console.log(`Your track ID is ${trackId}`)
+
+	process.exit(0)
+}
+
 (async () => {
 	const lyrics = await getLyrics(parsedMetadata);
 
@@ -119,6 +136,7 @@ if (process.argv.includes("--data") || process.argv.includes("-d")) {
 			if (lyricText.length > 0) return [time, lyricText];
 		})
 		.filter(Boolean);
+		debugLog(lyricsSplit)
 
 	for (const lyric of lyricsSplit) {
 		const timestamp = lyric[0];
@@ -131,7 +149,7 @@ if (process.argv.includes("--data") || process.argv.includes("-d")) {
 
 		const totalSeconds =
 			Number.parseFloat(minutes) * 60 + Number.parseFloat(seconds);
-
+		debugLog(currentSeconds, totalSeconds, timestamp)
 		if (currentSeconds >= totalSeconds) lastLyric = text;
 	}
 
@@ -161,6 +179,10 @@ async function fetchLyrics(metadata) {
 		lyrics: null,
 	};
 
+	if (!fs.existsSync(lyricsCacheDir)) fs.mkdirSync(lyricsCacheDir, {
+		recursive: true
+	})
+
 	const searchParams = [
 		`track_name=${encodeURIComponent(metadata.track)}`,
 		`artist_name=${encodeURIComponent(metadata.artist)}`,
@@ -170,44 +192,71 @@ async function fetchLyrics(metadata) {
 
 	const url = `https://lrclib.net/api/search?${searchParams.join("&")}`;
 
-	const res = await fetch(url);
+	try {
+		const res = await fetch(url);
 
-	if (!res.ok) {
-		debugLog(`Lyrics fetch request failed with status ${res.status} (${res.statusText})`)
-		
-		console.log(noLyrics);
+		if (!res.ok) {
+			debugLog(`Lyrics fetch request failed with status ${res.status} (${res.statusText})`)
+			
+			console.log(noLyrics);
+
+			fs.writeFileSync(lyricsCacheFile, JSON.stringify(cacheData, null, 4));
+
+			process.exit(0);
+		}
+
+		const data = await res.json();
+
+		const match = data.find(
+			(d) => d.artistName === metadata.artist && d.trackName === metadata.track,
+		);
+
+		if (!match || !match.syncedLyrics || match.syncedLyrics?.length <= 0) {
+			debugLog("The fetched song does not have synced lyrics")
+			console.log(noLyrics);
+
+			fs.writeFileSync(lyricsCacheFile, JSON.stringify(cacheData, null, 4));
+
+			process.exit(0);
+		}
+
+		debugLog("Successfully fetched and cached the synced lyrics")
+
+		cacheData.lyrics = match.syncedLyrics;
 
 		fs.writeFileSync(lyricsCacheFile, JSON.stringify(cacheData, null, 4));
 
-		process.exit(0);
-	}
-
-	const data = await res.json();
-
-	const match = data.find(
-		(d) => d.artistName === metadata.artist && d.trackName === metadata.track,
-	);
-
-	if (!match || !match.syncedLyrics || match.syncedLyrics?.length <= 0) {
-		debugLog("The fetched song does not have synced lyrics")
-		console.log(noLyrics);
-
+		return match.syncedLyrics;
+	} catch(e) {
 		fs.writeFileSync(lyricsCacheFile, JSON.stringify(cacheData, null, 4));
 
-		process.exit(0);
+		debugLog("Something went wrong while fetching the lyrics", e)
+
+		console.log(noLyrics)
+
+		process.exit(0)
 	}
-
-	debugLog("Successfully fetched and cached the synced lyrics")
-
-	cacheData.lyrics = match.syncedLyrics;
-
-	fs.writeFileSync(lyricsCacheFile, JSON.stringify(cacheData, null, 4));
-
-	return match.syncedLyrics;
 }
 
 async function getLyrics(metadata) {
 	let cachedLyrics;
+
+    const trackId = metadata.trackId.split('/').pop()
+
+    const localLyricsFile = path.join(
+        lyricsFolder,
+        `${trackId}.txt`
+    )
+
+    if (fs.existsSync(localLyricsFile)) {
+        debugLog("Loading lyrics from local file")
+
+        const lyrics = fs.readFileSync(localLyricsFile, 'utf-8')
+
+		debugLog(lyrics)
+
+        if (lyrics.length > 0 && lyrics.startsWith('[')) return lyrics;
+    } 
 
 	if (fs.existsSync(lyricsCacheFile)) {
 		const lyricsCache = fs.readFileSync(lyricsCacheFile, "utf-8");
