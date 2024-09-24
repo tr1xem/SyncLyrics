@@ -43,3 +43,7 @@ Example:
 [00:23.32] 'Cause the sparks in the sky
 [00:25.51] Took a hold of your eyes while we spoke
 ```
+
+## Requirements
+
+Your Linux distro must support `playerctl`.
