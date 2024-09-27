@@ -107,7 +107,7 @@ You can show the progress bar in the `custom/song` module by adding this CSS to 
 /* 
     Do the same with all the classes from #custom-song.perc3-0 to #custom-song.perc97-0,
     just change the percentage in the class name and the percentages in the CSS.
-    */
+*/
 
 #custom-song.perc98-0 {
     background-image: linear-gradient(
