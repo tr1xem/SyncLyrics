@@ -14,27 +14,60 @@ Just clone this repository
 
 ## Usage
 
-`node media.js` (by default will use first player returned by `playerctl`).
-
-- You can specify your player by running it as `PLALYER=<name> node media.js` (Example for Spotify: `PLAYER=spotify node media.js`).
-- You can change the current lyric color in the tooltip by running it as `TOOLTIP_CURRENT_LYRIC_COLOR=#abcdef node media.js`.
-- You can see debug logs by running `DEBUG=true node media.js`.
-- You can change the cache folder by running it as `CACHE_FOLDER=/path/to/folder node media.js`.
-- You can change the config folder by running it as `CONFIG_FOLDER=/path/to/folder node media.js`.
-
-*(All of those can be ran together too).*
+`node media.js`.
 
 ### Flags
 
-- `--data`, `-d`: Returns the song name and artist.
 - `--trackid`, `-tid`: Returns the song ID (required for local lyrics).
-- `--name`, `-n`: Returns the song name.
-- `--artist`, `-a`: Returns the artist name.
+- `--data`, `-d`: Returns the song name and artist. `*`
+- `--name`, `-n`: Returns the song name. `*`
+- `--artist`, `-a`: Returns the artist name. `*`
 - `--show-lyrics`, `-sl`: Saves the lyrics in a temporary file (`/tmp/lyrics.txt`) and opens the file (when combined with `--save` or `-s` it saves the lyrics in a permanent file, `~/Downloads/syncLyrics/<song_name>-<artist_name>.txt`).
+- `--play-toggle` or `-pt`: Plays or pauses the player.
+- `--volume-up` or `-vol+`: Increases the player's volume by 1%.
+- `--volume-down` or `-vol-`: Decreases the player's volume by 1%.
+
+`*` Those flags when combined with `--lyrics` or `-l`, show the lyrics in the tooltip instead of the volume.
+
+## Config
+
+Default config folder is `~/.config/syncLyrics`, this can be changed by running the script as `CONFIG_FOLDER=/path/to/folder`.
+The config are retried from a file `config.json` inside the config folder (create it if it doesn't exist).
+
+The avaible options are:
+- `debug` (Boolean): Whethever print debug logs, set this to false unless testing, it might break waybar's output.
+- `dataUpdateInterval` (Number): How often update the output returned by the `--data` or `-d` parameter (in milliseconds).
+- `nameUpdateInterval` (Number): How often update the output returned by the `--name` or `-n` parameter (in milliseconds).
+- `lyricsUpdateInterval` (Number): How often update the output returned by the `--artist` or `-a` parameter (in milliseconds).
+- `marqueeMinLength` (Number): Minimum length before the output of `--data`, `-d`, `--name`, `-n`, `--artist` and `-a` becomes a marquee (Scrolling text).
+- `ignoredPlayers` (Array\<String>): List of players that will never be used by the script.
+- `favoritePlayers` (Array\<String>): List of players that will be prioritized over others.
+- `hatedPlayers` (Array\<String>): Opposite of `favoritePlayers`
+
+### Example Config
+
+```json
+{
+    "debug": false,
+    "dataUpdateInterval": 1000,
+    "artistUpdateInterval": 1000,
+    "nameUpdateInterval": 1000,
+    "lyricsUpdateInterval": 500,
+    "marqueeMinLength": 30,
+    "ignoredPlayers": [
+        "chromium",
+        "plasma-browser-integration"
+    ],
+    "favoritePlayers": [
+        "spotify"
+    ],
+    "hatedPlayers": []
+}
+```
 
 ## Waybar Example
 
-This example uses `spotify` as player and has the `media.js` file located in `~/.config/custom-commands/media.js`
+This example uses has the `media.js` file located in `~/.config/custom-commands/media.js`
 
 ```json
 {
@@ -47,12 +80,11 @@ This example uses `spotify` as player and has the `media.js` file located in `~/
 		},
 		"return-type": "json",
 		"exec-if": "if [ -f ~/.config/custom-commands/media.js ]; then exit 0; else exit 1; fi",
-		"interval": 1,
-		"exec": "PLAYER=spotify node ~/.config/custom-commands/media.js --data",
-		"on-click": "playerctl -p spotify play-pause",
-		"on-click-middle": "pgrep -x 'spotify' > /dev/null && wmctrl -a 'Spotify' || spotify &",
-		"on-scroll-up": "playerctl -p spotify volume 0.01+",
-		"on-scroll-down": "playerctl -p spotify volume 0.01-",
+		"restart-interval": 30,
+		"exec": "node ~/.config/custom-commands/media.js --data",
+		"on-click": "node ~/.config/custom-commands/media.js --play-toggle",
+		"on-scroll-up": "node ~/.config/custom-commands/media.js --volume-up",
+		"on-scroll-down": "node ~/.config/custom-commands/media.js --volume-down",
 		"escape": true,
 		"exec-on-event": false
 	},
@@ -60,16 +92,18 @@ This example uses `spotify` as player and has the `media.js` file located in `~/
 	"custom/lyrics": {
 		"tooltip": true,
 		"format": "{icon} {}",
+		"format-alt": "",
 		"format-icons": {
 			"lyrics": "󰲹 ",
 			"none": "󰐓 "
 		},
 		"return-type": "json",
 		"exec-if": "if [ -f ~/.config/custom-commands/media.js ]; then exit 0; else exit 1; fi",
-		"interval": 1,
-		"exec": "PLAYER=spotify node ~/.config/custom-commands/media.js",
-		"on-click-middle": "PLAYER=spotify node ~/.config/custom-commands/media.js --show-lyrics",
+		"restart-interval": 30,
+		"exec": "node ~/.config/custom-commands/media.js",
+		"on-click-middle": "node ~/.config/custom-commands/media.js --show-lyrics",
 		"escape": true,
+		"hide-empty-text": true,
 		"exec-on-event": false
 	}
 }
@@ -138,7 +172,7 @@ You can show the progress bar in the `custom/song` module by adding this CSS to 
 
 You can add your own lyrics for it to use, if you add a custom lyrics file, it will be preferred over the API.
 
-The lyrics are read from the `$CONFIG_FOLDER/lyrics` folder, the files in this folder must be named `<track_id>.txt` (Example: `5nAu0J2rlijocTGX8QWo07.txt`) and their content must be formatted as `[mm:ss.xx] <lyrics here>` and each one must be on a new line.
+The lyrics are read from the `$CONFIG_FOLDER/lyrics` folder (`~/.config/syncLyrics` by default), the files in this folder must be named `<track_id>.txt` (Example: `5nAu0J2rlijocTGX8QWo07.txt`) and their content must be formatted as `[mm:ss.xx] <lyrics here>` and each one must be on a new line.
 
 Example:
 ```txt
