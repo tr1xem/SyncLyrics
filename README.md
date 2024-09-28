@@ -31,7 +31,7 @@ Just clone this repository
 
 ## Config
 
-Default config folder is `~/.config/syncLyrics`, this can be changed by running the script as `CONFIG_FOLDER=/path/to/folder`.
+Default config folder is `~/.config/syncLyrics`, this can be changed by running the script as `CONFIG_FOLDER=/path/to/folder node media.js`.<br />
 The config are retried from a file `config.json` inside the config folder (create it if it doesn't exist).
 
 The avaible options are:
