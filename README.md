@@ -32,7 +32,7 @@ Just clone this repository
 ## Config
 
 Default config folder is `~/.config/syncLyrics`, this can be changed by running the script as `CONFIG_FOLDER=/path/to/folder node media.js`.<br />
-The config are retried from a file `config.json` inside the config folder (create it if it doesn't exist).
+The config are read from a file `config.json` inside the config folder (create it if it doesn't exist).
 
 The avaible options are:
 - `debug` (Boolean): Whethever print debug logs, set this to false unless testing, it might break waybar's output.
