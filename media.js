@@ -1,8 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execSync } = require("node:child_process");
-const https = require('https');
-const http = require('http');
 const artFile =
 	process.env.CONFIG_FOLDER ||
 	path.join(process.env.HOME, ".config", "syncLyrics","cover");
@@ -145,10 +143,12 @@ if (["--data", "-d"].some((arg) => process.argv.includes(arg))) {
 			}
 
 			if (["--cover", "-c"].some((arg) => process.argv.includes(arg))) {
-			    if (metadata.status !== "Paused" || metadata.status !== "paused" || metadata.status !== "none") {
-			        downloadArt(metadata.cover, artFile, configFile);
-			        debugLog("Saved Cover Art");
-			    }
+			    if (isPlayerChanged(metadata.track)){
+				    if (metadata.status !== "Paused" || metadata.status !== "paused" || metadata.status !== "none") {
+				        downloadArt(metadata.cover, artFile, configFile);
+				        debugLog("Saved Cover Art");
+				    }
+				}
 			}
 
 			let tooltip;
@@ -680,6 +680,7 @@ function debugLog(...args) {
 	if (config.debug) console.debug("\x1b[35;1mDEBUG:\x1b[0m", ...args);
 }
 
+
 async function downloadArt(artUrl, artFilePath, config) {
   if (fs.existsSync(artFile)) {
     fs.unlinkSync(artFile);
@@ -687,7 +688,7 @@ async function downloadArt(artUrl, artFilePath, config) {
 
   if (artUrl.startsWith('https')) {
     const file = fs.createWriteStream(artFile);
-    const request = https.get(artUrl, (response) => {
+    const request = fetch(artUrl, (response) => {
       response.pipe(file);
       file.on('finish', () => {
         file.close();
@@ -707,6 +708,13 @@ async function downloadArt(artUrl, artFilePath, config) {
   } else {
     throw new Error(`Invalid schema for ${artUrl}`);
   }
+
+		const output = template
+			.replace("{{text}}", `<img src='${artFile}' style='width:28px;height:28px;'>`)
+			.replace("{{alt}}", 'none')
+
+			.replace("{{tooltip}}",`<img src='${artFile}' style='width:32px;height:32px;'>`);
+	outputLog(output);
 }
 async function downloadArtdelete(artUrl, artFilePath, config) {
   if (fs.existsSync(artFile)) {
@@ -715,3 +723,10 @@ async function downloadArtdelete(artUrl, artFilePath, config) {
 
 }
 
+let currentPlayer = ""; 
+
+function isPlayerChanged(newPlayer) {
+    const hasChanged = currentPlayer === "" || currentPlayer !== newPlayer;
+    currentPlayer = newPlayer;
+    return hasChanged;
+}
