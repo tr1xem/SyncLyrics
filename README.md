@@ -26,6 +26,7 @@ Just clone this repository
 - `--play-toggle` or `-pt`: Plays or pauses the player.
 - `--volume-up` or `-vol+`: Increases the player's volume by 1%.
 - `--volume-down` or `-vol-`: Decreases the player's volume by 1%.
+- `--cover` or `c` : Saves the cover image to config dir `*`
 
 `*` Those flags when combined with `--lyrics` or `-l`, show the lyrics in the tooltip instead of the volume.
 
@@ -105,7 +106,14 @@ This example uses has the `media.js` file located in `~/.config/custom-commands/
 		"escape": true,
 		"hide-empty-text": true,
 		"exec-on-event": false
-	}
+	},
+	"image#albumart": {
+	  "path": "/home/username/.config/syncLyrics/cover",
+	  "interval":1,
+	  "size": 32,
+	  "signal": 4,
+	  "on-click": "feh --auto-zoom --borderless --title 'feh-float' /home/username/.config/syncLyrics/cover"
+	},
 }
 ```
 
