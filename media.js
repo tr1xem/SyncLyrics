@@ -1,6 +1,11 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execSync } = require("node:child_process");
+const https = require('https');
+const http = require('http');
+const artFile =
+	process.env.CONFIG_FOLDER ||
+	path.join(process.env.HOME, ".config", "syncLyrics","cover");
 
 const template = JSON.stringify({
 	text: "{{text}}",
@@ -18,13 +23,13 @@ const noLyrics = template
 const noSong = template
 	.replace("{{text}}", "No Song Playing")
 	.replace("{{icon}}", "none")
-	.replace("{{class}}", "none")
+	.replace("{{class}}", "paused")
 	.replace("{{tooltip}}", "none");
 
 const noMedia = template
 	.replace("{{text}}", "No Media Playing")
 	.replace("{{icon}}", "none")
-	.replace("{{class}}", "none")
+	.replace("{{class}}", "paused")
 	.replace("{{tooltip}}", "none");
 
 const empty = template
@@ -36,6 +41,7 @@ const empty = template
 const configFolder =
 	process.env.CONFIG_FOLDER ||
 	path.join(process.env.HOME, ".config", "syncLyrics");
+
 
 const configFile = path.join(configFolder, "config.json");
 
@@ -127,14 +133,22 @@ if (["--data", "-d"].some((arg) => process.argv.includes(arg))) {
 
 			if (!metadata) {
 				debugLog("no media");
+				downloadArtdelete();
 
 				return outputLog(noMedia);
 			}
 
-			if (!metadata.track || !metadata.artist) {
+			if (!metadata.track && !metadata.artist) {
 				debugLog("Metadata doesn't include the song or artist name");
-
+				downloadArtdelete();
 				return outputLog(noSong);
+			}
+
+			if (["--cover", "-c"].some((arg) => process.argv.includes(arg))) {
+			    if (metadata.status !== "Paused" || metadata.status !== "paused" || metadata.status !== "none") {
+			        downloadArt(metadata.cover, artFile, configFile);
+			        debugLog("Saved Cover Art");
+			    }
 			}
 
 			let tooltip;
@@ -153,14 +167,14 @@ if (["--data", "-d"].some((arg) => process.argv.includes(arg))) {
 			}
 
 			const data = marquee(`${metadata.artist} - ${metadata.track}`);
+//console.log(metadata.status)
+    const output = template
+        .replace("{{text}}", escapeMarkup(data))
+        .replace("{{icon}}", (metadata.status).toLowerCase())
+        .replace("{{class}}", `perc${metadata.percentage}-0`)
+        .replace("{{tooltip}}", tooltip);
 
-			const output = template
-				.replace("{{text}}", escapeMarkup(data))
-				.replace("{{icon}}", "playing")
-				.replace("{{class}}", `perc${metadata.percentage}-0`)
-				.replace("{{tooltip}}", tooltip);
-
-			outputLog(output);
+    outputLog(output);
 		}, config.dataUpdateInterval || 1000);
 }
 
@@ -175,8 +189,9 @@ if (["--artist", "-a"].some((arg) => process.argv.includes(arg))) {
 				return outputLog(noMedia);
 			}
 
-			if (!metadata.track || !metadata.artist) {
+			if (!metadata.track && !metadata.artist) {
 				debugLog("Metadata doesn't include the song or artist name");
+				downloadArtdelete();
 
 				return outputLog(noSong);
 			}
@@ -200,7 +215,7 @@ if (["--artist", "-a"].some((arg) => process.argv.includes(arg))) {
 
 			const output = template
 				.replace("{{text}}", escapeMarkup(data))
-				.replace("{{icon}}", "playing")
+        		.replace("{{icon}}", (metadata.status).toLowerCase())
 				.replace("{{class}}", `perc${metadata.percentage}-0`)
 				.replace("{{tooltip}}", tooltip);
 
@@ -215,12 +230,14 @@ if (["--name", "-n"].some((arg) => process.argv.includes(arg))) {
 
 			if (!metadata) {
 				debugLog("no media");
+				downloadArtdelete();
 
 				return outputLog(noMedia);
 			}
 
-			if (!metadata.track || !metadata.artist) {
+			if (!metadata.track && !metadata.artist) {
 				debugLog("Metadata doesn't include the song or artist name");
+				downloadArtdelete();
 
 				return outputLog(noSong);
 			}
@@ -244,7 +261,7 @@ if (["--name", "-n"].some((arg) => process.argv.includes(arg))) {
 
 			const output = template
 				.replace("{{text}}", escapeMarkup(data))
-				.replace("{{icon}}", "playing")
+                .replace("{{icon}}", (metadata.status).toLowerCase())
 				.replace("{{class}}", `perc${metadata.percentage}-0`)
 				.replace("{{tooltip}}", tooltip);
 
@@ -287,6 +304,8 @@ if (["--volume-down", "-vol-"].some((arg) => process.argv.includes(arg))) {
 
 	process.exit(0);
 }
+
+
 
 if (!currentInterval)
 	currentInterval = setInterval(async () => {
@@ -342,7 +361,7 @@ function updateConfig() {
 	}
 }
 
-function getPlayer(skipPaused = true) {
+function getPlayer(skipPaused = false) {
 	let players;
 
 	try {
@@ -400,7 +419,8 @@ function fetchPlayerctl() {
 	let currentSeconds;
 	let rawMetadata;
 	let volume;
-
+	let status;
+	let cover;
 	try {
 		const currentTime = execSync(`playerctl -p ${player} position`)
 			.toString()
@@ -409,7 +429,7 @@ function fetchPlayerctl() {
 		currentSeconds = Math.round(Number.parseFloat(currentTime) + 1);
 
 		rawMetadata = execSync(
-			`playerctl metadata -p ${player} --format "{{artist}}|{{album}}|{{title}}|{{mpris:trackid}}|{{mpris:length}}"`,
+			`playerctl metadata -p ${player} --format "{{artist}}|{{album}}|{{title}}|{{mpris:trackid}}|{{mpris:length}}|{{status}}|{{mpris:artUrl}}"`,
 		)
 			.toString()
 			.trim()
@@ -429,6 +449,7 @@ function fetchPlayerctl() {
 			)
 		) {
 			outputLog(noSong);
+				downloadArtdelete();
 
 			process.exit(0);
 		}
@@ -446,8 +467,10 @@ function fetchPlayerctl() {
 		track: rawMetadata[2],
 		trackId: rawMetadata[3],
 		lengthMs: Number.parseFloat(rawMetadata[4]) / 1000,
+		status : rawMetadata[5],
+		cover : rawMetadata[6]
 	};
-
+debugLog(metadata)
 	metadata.percentage = Math.round(
 		(metadata.currentMs / metadata.lengthMs) * 100,
 	);
@@ -636,7 +659,7 @@ function getLyricsData(metadata, lyrics) {
 }
 
 function formatLyricsTooltipText(data) {
-	const tooltipColor = config.tooltipCurrentLyricColor || "#cba6f7";
+	const tooltipColor = config.tooltipCurrentLyricColor || "#de514d";
 
 	const previousLyrics =
 		data.previous.length > 0
@@ -656,3 +679,39 @@ function outputLog(...args) {
 function debugLog(...args) {
 	if (config.debug) console.debug("\x1b[35;1mDEBUG:\x1b[0m", ...args);
 }
+
+async function downloadArt(artUrl, artFilePath, config) {
+  if (fs.existsSync(artFile)) {
+    fs.unlinkSync(artFile);
+  }
+
+  if (artUrl.startsWith('https')) {
+    const file = fs.createWriteStream(artFile);
+    const request = https.get(artUrl, (response) => {
+      response.pipe(file);
+      file.on('finish', () => {
+        file.close();
+        const originalName = "cover.jpg";
+       // fs.renameSync(artFilePath, path.join(path.dirname(artFilePath), originalName));
+        debugLog(`Original ${originalName} downloaded and saved.`);
+      });
+    });
+  } else if (artUrl.startsWith('file://')) {
+    const filePath = new URL(artUrl).pathname; // Using URL to convert
+    try {
+      fs.copyFileSync(filePath, artFilePath);
+      debugLog(`Local file ${filePath} copied to ${artFilePath}`);
+    } catch (error) {
+      debugLog(`Error copying file: ${error.message}`);
+    }
+  } else {
+    throw new Error(`Invalid schema for ${artUrl}`);
+  }
+}
+async function downloadArtdelete(artUrl, artFilePath, config) {
+  if (fs.existsSync(artFile)) {
+    fs.unlinkSync(artFile);
+  }
+
+}
+
