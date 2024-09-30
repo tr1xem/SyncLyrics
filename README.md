@@ -82,7 +82,7 @@ This example uses has the `media.js` file located in `~/.config/custom-commands/
 		"return-type": "json",
 		"exec-if": "if [ -f ~/.config/custom-commands/media.js ]; then exit 0; else exit 1; fi",
 		"restart-interval": 30,
-		"exec": "node ~/.config/custom-commands/media.js --data",
+		"exec": "node ~/.config/custom-commands/media.js --data -c",
 		"on-click": "node ~/.config/custom-commands/media.js --play-toggle",
 		"on-scroll-up": "node ~/.config/custom-commands/media.js --volume-up",
 		"on-scroll-down": "node ~/.config/custom-commands/media.js --volume-down",
@@ -110,7 +110,7 @@ This example uses has the `media.js` file located in `~/.config/custom-commands/
 	"image#albumart": {
 	  "path": "/home/username/.config/syncLyrics/cover",
 	  "interval":1,
-	  "size": 32,
+	  "size": 25,
 	  "signal": 4,
 	  "on-click": "feh --auto-zoom --borderless --title 'feh-float' /home/username/.config/syncLyrics/cover"
 	},
