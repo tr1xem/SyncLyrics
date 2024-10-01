@@ -1,81 +1,89 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execSync } = require("node:child_process");
-const artFile =
-	process.env.CONFIG_FOLDER ||
-	path.join(process.env.HOME, ".config", "syncLyrics","cover");
 
-const template = JSON.stringify({
-	text: "{{text}}",
-	alt: "{{icon}}",
-	class: "{{class}}",
-	tooltip: "{{tooltip}}",
+const noLyrics = JSON.stringify({
+	text: "No Lyrics Avaible",
+	alt: "none",
+	class: "paused",
+	tooltip: "none",
 });
 
-const noLyrics = template
-	.replace("{{text}}", "No Lyrics Avaible")
-	.replace("{{icon}}", "none")
-	.replace("{{class}}", "none")
-	.replace("{{tooltip}}", "none");
+const noSong = JSON.stringify({
+	text: "No Song Playing",
+	alt: "none",
+	class: "paused",
+	tooltip: "none",
+});
 
-const noSong = template
-	.replace("{{text}}", "No Song Playing")
-	.replace("{{icon}}", "none")
-	.replace("{{class}}", "paused")
-	.replace("{{tooltip}}", "none");
-
-const noMedia = template
-	.replace("{{text}}", "No Media Playing")
-	.replace("{{icon}}", "none")
-	.replace("{{class}}", "paused")
-	.replace("{{tooltip}}", "none");
-
-const empty = template
-	.replace('"{{text}}"', 'null')
-	.replace("{{icon}}", "empty")
-	.replace("{{class}}", "empty")
-	.replace("{{tooltip}}", "empty");
+const noMedia = JSON.stringify({
+	text: "No Media Playing",
+	alt: "none",
+	class: "none",
+	tooltip: "none",
+});
 
 const configFolder =
 	process.env.CONFIG_FOLDER ||
 	path.join(process.env.HOME, ".config", "syncLyrics");
 
+if (configFolder.startsWith("./")) {
+	outputLog("\x1b[31mConfig folder must be an absolute path");
+
+	process.exit(0);
+}
 
 const configFile = path.join(configFolder, "config.json");
 
-let config = {};
-let cachedLyrics;
-let currentMarqueeIndex = 0;
-let lastStoppedPlayer;
+let config = {
+	debug: false,
+	dataUpdateInterval: 1000,
+	artistUpdateInterval: 1000,
+	nameUpdateInterval: 1000,
+	lyricsUpdateInterval: 500,
+	marqueeMinLength: 30,
+	ignoredPlayers: [],
+	favoritePlayers: [],
+	hatedPlayers: [],
+	iconPath: null,
+};
 
-if (fs.existsSync(configFile)) {
-	updateConfig();
+let cachedLyrics;
+let currentTrackId;
+let currentInterval;
+let lastStoppedPlayer;
+let currentIntervalType;
+let currentMarqueeIndex = 0;
+
+if (!fs.existsSync(configFolder))
+	fs.mkdirSync(configFolder, {
+		recursive: true,
+	});
+
+updateConfig();
+
+debugLog("Using config:", config);
+
+debugLog(`Loaded config from the file ${configFile}`);
+
+fs.watchFile(configFile, () => {
+	debugLog("Config file has been updated. Updating config...");
 
 	debugLog("Using config:", config);
 
-	debugLog(`Loaded config from the file ${configFile}`);
-
-	fs.watchFile(configFile, () => {
-		debugLog("Config file has been updated. Updating config...");
-
-		debugLog("Using config:", config);
-
-		updateConfig();
-	});
-}
+	updateConfig();
+});
 
 debugLog(`Using config folder: ${configFolder}`);
 
-let currentInterval;
+if (["--volume-down", "-vol-"].some((arg) => process.argv.includes(arg))) {
+	const player = getPlayer();
 
-if (["--trackid", "-tid"].some((arg) => process.argv.includes(arg))) {
-	const metadata = fetchPlayerctl();
+	if (!player && !lastStoppedPlayer) process.exit(0);
 
-	if (!metadata) process.exit(0);
+	execSync(`playerctl -p ${lastStoppedPlayer || player} volume 0.01-`);
 
-	const trackId = metadata.trackId.split("/").pop();
-
-	outputLog(`Current track ID is: ${trackId}`);
+	lastStoppedPlayer = player;
 
 	process.exit(0);
 }
@@ -101,7 +109,10 @@ if (["--show-lyrics", "-sl"].some((arg) => process.argv.includes(arg))) {
 				"syncLyric",
 			);
 
-			if (!fs.existsSync(downloadFolder)) fs.mkdirSync(downloadFolder);
+			if (!fs.existsSync(downloadFolder))
+				fs.mkdirSync(downloadFolder, {
+					recursive: true,
+				});
 
 			const fileName = `${metadata.track.replaceAll(" ", "_")}-${metadata.artist.replaceAll(" ", "_")}.txt`;
 
@@ -124,149 +135,41 @@ if (["--show-lyrics", "-sl"].some((arg) => process.argv.includes(arg))) {
 	})();
 }
 
-if (["--data", "-d"].some((arg) => process.argv.includes(arg))) {
-	if (!currentInterval)
-		currentInterval = setInterval(async () => {
-			const metadata = fetchPlayerctl();
+if (["--show-cover", "-sc"].some((arg) => process.argv.includes(arg))) {
+	const iconPath = config.iconPath || path.join(configFolder, "icon.png");
 
-			if (!metadata) {
-				debugLog("no media");
-				downloadArtdelete();
+	if (!fs.existsSync(iconPath)) process.exit(0);
 
-				return outputLog(noMedia);
-			}
+	if (["--save", "-s"].some((arg) => process.argv.includes(arg))) {
+		const metadata = fetchPlayerctl();
 
-			if (!metadata.track && !metadata.artist) {
-				debugLog("Metadata doesn't include the song or artist name");
-				downloadArtdelete();
-				return outputLog(noSong);
-			}
+		if (!metadata) process.exit(0);
 
-			if (["--cover", "-c"].some((arg) => process.argv.includes(arg))) {
-			    if (isPlayerChanged(metadata.track)){
-				    if (metadata.status !== "Paused" || metadata.status !== "paused" || metadata.status !== "none") {
-				        downloadArt(metadata.cover, artFile, configFile);
-				        debugLog("Saved Cover Art");
-				    }
-				}
-			}
+		const downloadFolder = path.join(
+			process.env.HOME,
+			"Downloads",
+			"syncLyric",
+		);
 
-			let tooltip;
+		if (!fs.existsSync(downloadFolder))
+			fs.mkdirSync(downloadFolder, {
+				recursive: true,
+			});
 
-			if (["--lyrics", "-l"].some((arg) => process.argv.includes(arg))) {
-				const lyrics = await getLyrics(metadata);
+		const fileName = `${metadata.track.replaceAll(" ", "_")}-${metadata.artist.replaceAll(" ", "_")}.png`;
 
-				if (!lyrics) tooltip = "No Lyrics Avaible";
-				else {
-					const lyricsData = getLyricsData(metadata, lyrics);
+		const filePath = path.join(downloadFolder, fileName);
 
-					tooltip = formatLyricsTooltipText(lyricsData);
-				}
-			} else {
-				tooltip = `Volume: ${metadata.volume}%`;
-			}
+		fs.copyFileSync(iconPath, filePath);
 
-			const data = marquee(`${metadata.artist} - ${metadata.track}`);
-//console.log(metadata.status)
-    const output = template
-        .replace("{{text}}", escapeMarkup(data))
-        .replace("{{icon}}", (metadata.status).toLowerCase())
-        .replace("{{class}}", `perc${metadata.percentage}-0`)
-        .replace("{{tooltip}}", tooltip);
+		execSync(`xdg-open ${filePath}`);
 
-    outputLog(output);
-		}, config.dataUpdateInterval || 1000);
-}
+		process.exit(0);
+	}
 
-if (["--artist", "-a"].some((arg) => process.argv.includes(arg))) {
-	if (!currentInterval)
-		currentInterval = setInterval(async () => {
-			const metadata = fetchPlayerctl();
+	execSync(`xdg-open ${iconPath}`);
 
-			if (!metadata) {
-				debugLog("no media");
-
-				return outputLog(noMedia);
-			}
-
-			if (!metadata.track && !metadata.artist) {
-				debugLog("Metadata doesn't include the song or artist name");
-				downloadArtdelete();
-
-				return outputLog(noSong);
-			}
-
-			let tooltip;
-
-			if (["--lyrics", "-l"].some((arg) => process.argv.includes(arg))) {
-				const lyrics = await getLyrics(metadata);
-
-				if (!lyrics) tooltip = "No Lyrics Avaible";
-				else {
-					const lyricsData = getLyricsData(metadata, lyrics);
-
-					tooltip = formatLyricsTooltipText(lyricsData);
-				}
-			} else {
-				tooltip = `Volume: ${metadata.volume}%`;
-			}
-
-			const data = marquee(`${metadata.artist}`);
-
-			const output = template
-				.replace("{{text}}", escapeMarkup(data))
-        		.replace("{{icon}}", (metadata.status).toLowerCase())
-				.replace("{{class}}", `perc${metadata.percentage}-0`)
-				.replace("{{tooltip}}", tooltip);
-
-			outputLog(output);
-		}, config.artistUpdateInterval || 1000);
-}
-
-if (["--name", "-n"].some((arg) => process.argv.includes(arg))) {
-	if (!currentInterval)
-		currentInterval = setInterval(async () => {
-			const metadata = fetchPlayerctl();
-
-			if (!metadata) {
-				debugLog("no media");
-				downloadArtdelete();
-
-				return outputLog(noMedia);
-			}
-
-			if (!metadata.track && !metadata.artist) {
-				debugLog("Metadata doesn't include the song or artist name");
-				downloadArtdelete();
-
-				return outputLog(noSong);
-			}
-
-			let tooltip;
-
-			if (["--lyrics", "-l"].some((arg) => process.argv.includes(arg))) {
-				const lyrics = await getLyrics(metadata);
-
-				if (!lyrics) tooltip = "No Lyrics Avaible";
-				else {
-					const lyricsData = getLyricsData(metadata, lyrics);
-
-					tooltip = formatLyricsTooltipText(lyricsData);
-				}
-			} else {
-				tooltip = `Volume: ${metadata.volume}%`;
-			}
-
-			const data = marquee(`${metadata.track}`);
-
-			const output = template
-				.replace("{{text}}", escapeMarkup(data))
-                .replace("{{icon}}", (metadata.status).toLowerCase())
-				.replace("{{class}}", `perc${metadata.percentage}-0`)
-				.replace("{{tooltip}}", tooltip);
-
-			outputLog(output);
-		}, config.nameUpdateInterval || 1000);
+	process.exit(0);
 }
 
 if (["--play-toggle", "-pt"].some((arg) => process.argv.includes(arg))) {
@@ -293,191 +196,72 @@ if (["--volume-up", "-vol+"].some((arg) => process.argv.includes(arg))) {
 	process.exit(0);
 }
 
-if (["--volume-down", "-vol-"].some((arg) => process.argv.includes(arg))) {
-	const player = getPlayer();
+if (["--trackid", "-tid"].some((arg) => process.argv.includes(arg))) {
+	const metadata = fetchPlayerctl();
 
-	if (!player && !lastStoppedPlayer) process.exit(0);
+	if (!metadata) process.exit(0);
 
-	execSync(`playerctl -p ${lastStoppedPlayer || player} volume 0.01-`);
+	const trackId = metadata.trackId.split("/").pop();
 
-	lastStoppedPlayer = player;
+	outputLog(`Current track ID is: ${trackId}`);
 
 	process.exit(0);
 }
 
+if (["--cover", "-c"].some((arg) => process.argv.includes(arg))) {
+	const metadata = getPlayer(false);
 
-
-if (!currentInterval)
-	currentInterval = setInterval(async () => {
-		const metadata = fetchPlayerctl();
-
-		if (!metadata) return outputLog();
-
-		const lyrics = await getLyrics(metadata);
-
-		if (!lyrics) return outputLog(noLyrics);
-
-		const lyricsData = getLyricsData(metadata, lyrics);
-		const tooltip = formatLyricsTooltipText(lyricsData);
-
-		const output = template
-			.replace("{{text}}", lyricsData.current)
-			.replace("{{icon}}", "lyrics")
-			.replace("{{class}}", "none")
-			.replace("{{tooltip}}", tooltip);
-
-		outputLog(output);
-	}, config.lyricsUpdateInterval || 500);
-
-function escapeMarkup(text) {
-	return text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, '\\"');
-}
-
-function marquee(text) {
-	if (text.length <= (config.marqueeMinLength || 40)) return text;
-
-	if (text.length < currentMarqueeIndex) {
-		currentMarqueeIndex = 0;
-	}
-
-	text = `${text}   `;
-	const marqueeText =
-		text.slice(currentMarqueeIndex) + text.slice(0, currentMarqueeIndex);
-
-	currentMarqueeIndex = (currentMarqueeIndex + 1) % text.length;
-
-	return marqueeText.slice(0, 40);
-}
-
-function updateConfig() {
-	const configFileContent = fs.readFileSync(configFile, "utf-8");
-
-	try {
-		config = JSON.parse(configFileContent);
-	} catch (e) {
-		debugLog("Config file is not a valid JSON");
-
-		process.exit(0);
-	}
-}
-
-function getPlayer(skipPaused = false) {
-	let players;
-
-	try {
-		players = execSync("playerctl --list-all").toString().trim();
-	} catch (e) {
-		debugLog("Something went wrong while getting the list of players", e);
-
-		return null;
-	}
-
-	const playersList = players
-		.split("\n")
-		.map((player) => player.split(".").shift())
-		.filter((player) => {
-			if (config.ignoredPlayers?.includes(player)) return false;
-
-			return true;
-		})
-		.sort((a, b) => {
-			const aIsFavorite = config.favoritePlayers?.includes(a);
-			const bIsFavorite = config.favoritePlayers?.includes(b);
-			const aIsHated = config.hatedPlayers?.includes(a);
-			const bIsHated = config.hatedPlayers?.includes(b);
-
-			if (aIsFavorite && !bIsFavorite) return -1;
-			if (!aIsFavorite && bIsFavorite) return 1;
-
-			if (aIsHated && !bIsHated) return 1;
-			if (!aIsHated && bIsHated) return -1;
-
-			return 0;
-		});
-
-	debugLog("Avaible Players", playersList);
-
-	if (playersList.length <= 0) return null;
-
-	for (const player of playersList) {
-		if (!skipPaused) return player;
-
-		const isPlaying =
-			execSync(`playerctl -p ${player} status`).toString().trim() === "Playing";
-
-		if (!isPlaying) continue;
-
-		return player;
-	}
-}
-
-function fetchPlayerctl() {
-	const player = getPlayer();
-
-	if (!player) return null;
-
-	let currentSeconds;
-	let rawMetadata;
-	let volume;
-	let status;
-	let cover;
-	try {
-		const currentTime = execSync(`playerctl -p ${player} position`)
-			.toString()
-			.trim();
-
-		currentSeconds = Math.round(Number.parseFloat(currentTime) + 1);
-
-		rawMetadata = execSync(
-			`playerctl metadata -p ${player} --format "{{artist}}|{{album}}|{{title}}|{{mpris:trackid}}|{{mpris:length}}|{{status}}|{{mpris:artUrl}}"`,
-		)
-			.toString()
-			.trim()
-			.split("|");
-
-		const currentVolume = execSync(`playerctl -p ${player} volume`)
-			.toString()
-			.trim();
-
-		volume = Number.parseFloat(currentVolume);
-	} catch (e) {
-		debugLog("Something went wrong while getting data from playerctl", e);
-
-		if (
-			["--artist", "--data", "--name", "-a", "-d", "-n"].some((arg) =>
-				process.argv.includes(arg),
-			)
-		) {
-			outputLog(noSong);
-				downloadArtdelete();
-
-			process.exit(0);
-		}
-
-		outputLog(noLyrics);
+	if (!metadata) {
+		outputLog();
 
 		process.exit(0);
 	}
 
-	const metadata = {
-		volume: Number.parseInt(volume * 100),
-		currentMs: Number.parseFloat(currentSeconds) * 1000,
-		artist: rawMetadata[0],
-		album: rawMetadata[1],
-		track: rawMetadata[2],
-		trackId: rawMetadata[3],
-		lengthMs: Number.parseFloat(rawMetadata[4]) / 1000,
-		status : rawMetadata[5],
-		cover : rawMetadata[6]
-	};
-debugLog(metadata)
-	metadata.percentage = Math.round(
-		(metadata.currentMs / metadata.lengthMs) * 100,
+	outputLog(config.iconPath || path.join(configFolder, "icon.png"));
+
+	process.exit(0);
+}
+
+if (["--artist", "-a"].some((arg) => process.argv.includes(arg))) {
+	if (!currentInterval) {
+		currentIntervalType = "artist";
+
+		currentInterval = setInterval(
+			returnArtist,
+			config.artistUpdateInterval || 1000,
+		);
+	}
+}
+
+if (["--data", "-d"].some((arg) => process.argv.includes(arg))) {
+	if (!currentInterval) {
+		currentIntervalType = "data";
+
+		currentInterval = setInterval(
+			returnData,
+			config.dataUpdateInterval || 1000,
+		);
+	}
+}
+
+if (["--name", "-n"].some((arg) => process.argv.includes(arg))) {
+	if (!currentInterval) {
+		currentIntervalType = "name";
+
+		currentInterval = setInterval(
+			returnName,
+			config.nameUpdateInterval || 1000,
+		);
+	}
+}
+
+if (!currentInterval) {
+	currentIntervalType = "lyrics";
+
+	currentInterval = setInterval(
+		returnLyrics,
+		config.lyricsUpdateInterval || 500,
 	);
-
-	debugLog("Metadata:", metadata);
-
-	return metadata;
 }
 
 async function fetchLyrics(metadata) {
@@ -580,6 +364,159 @@ async function getLyrics(metadata) {
 	return cachedLyrics.lyrics;
 }
 
+async function returnArtist() {
+	const metadata = fetchPlayerctl();
+
+	if (!metadata) {
+		debugLog("no media");
+
+		return outputLog(noMedia);
+	}
+
+	if (!metadata.artist) {
+		debugLog("Metadata doesn't include the artist name");
+
+		return outputLog(noSong);
+	}
+
+	let tooltip;
+
+	if (["--lyrics", "-l"].some((arg) => process.argv.includes(arg))) {
+		const lyrics = await getLyrics(metadata);
+
+		if (!lyrics) tooltip = "No Lyrics Avaible";
+		else {
+			const lyricsData = getLyricsData(metadata, lyrics);
+
+			tooltip = formatLyricsTooltipText(lyricsData);
+		}
+	} else {
+		tooltip = `Volume: ${metadata.volume}%`;
+	}
+
+	const data = marquee(`${metadata.artist}`);
+
+	const output = JSON.stringify({
+		text: escapeMarkup(data),
+		alt: "playing",
+		class: `perc${metadata.percentage}-0`,
+		tooltip: tooltip,
+	});
+
+	outputLog(output);
+}
+
+async function returnLyrics() {
+	const metadata = fetchPlayerctl();
+
+	if (!metadata) return outputLog();
+
+	const lyrics = await getLyrics(metadata);
+
+	if (!lyrics) return outputLog(noLyrics);
+
+	const lyricsData = getLyricsData(metadata, lyrics);
+	const tooltip = formatLyricsTooltipText(lyricsData);
+
+	const output = JSON.stringify({
+		text: escapeMarkup(lyricsData.current),
+		alt: "lyrics",
+		class: "none",
+		tooltip: tooltip,
+	});
+
+	outputLog(output);
+}
+
+async function returnName() {
+	const metadata = fetchPlayerctl();
+
+	if (!metadata) {
+		debugLog("no media");
+
+		return outputLog(noMedia);
+	}
+
+	if (!metadata.track) {
+		debugLog("Metadata doesn't include the song name");
+
+		return outputLog(noSong);
+	}
+
+	let tooltip;
+
+	if (["--lyrics", "-l"].some((arg) => process.argv.includes(arg))) {
+		const lyrics = await getLyrics(metadata);
+
+		if (!lyrics) tooltip = "No Lyrics Avaible";
+		else {
+			const lyricsData = getLyricsData(metadata, lyrics);
+
+			tooltip = formatLyricsTooltipText(lyricsData);
+		}
+	} else {
+		tooltip = `Volume: ${metadata.volume}%`;
+	}
+
+	const data = marquee(`${metadata.track}`);
+
+	const output = JSON.stringify({
+		text: escapeMarkup(data),
+		alt: "playing",
+		class: `perc${metadata.percentage}-0`,
+		tooltip: tooltip,
+	});
+
+	outputLog(output);
+}
+
+async function returnData() {
+	const metadata = fetchPlayerctl();
+
+	if (!metadata) {
+		debugLog("no media");
+
+		return outputLog(noMedia);
+	}
+
+	if (!metadata.track && !metadata.artist) {
+		debugLog("Metadata doesn't include the song or artist name");
+
+		return outputLog(noSong);
+	}
+
+	let tooltip;
+
+	if (["--lyrics", "-l"].some((arg) => process.argv.includes(arg))) {
+		const lyrics = await getLyrics(metadata);
+
+		if (!lyrics) tooltip = "No Lyrics Avaible";
+		else {
+			const lyricsData = getLyricsData(metadata, lyrics);
+
+			tooltip = formatLyricsTooltipText(lyricsData);
+		}
+	} else {
+		tooltip = `Volume: ${metadata.volume}%`;
+	}
+
+	let text = "";
+	if (metadata.artist) text = metadata.artist;
+	if (metadata.track)
+		text = text.length > 0 ? `${text} - ${metadata.track}` : metadata.track;
+
+	const data = marquee(`${metadata.artist} - ${metadata.track}`);
+
+	const output = JSON.stringify({
+		text: escapeMarkup(data),
+		alt: "playing",
+		class: `perc${metadata.percentage}-0`,
+		tooltip: tooltip,
+	});
+
+	outputLog(output);
+}
+
 function getLyricsData(metadata, lyrics) {
 	let firstLyric;
 	let lastLyric;
@@ -663,13 +600,110 @@ function formatLyricsTooltipText(data) {
 
 	const previousLyrics =
 		data.previous.length > 0
-			? `${escapeMarkup(data.previous.join("\\n"))}\\n`
+			? `${escapeMarkup(data.previous.join("\n"))}\n`
 			: "";
 
 	const nextLyrics =
-		data.next.length > 0 ? `\\n${escapeMarkup(data.next.join("\\n"))}` : "";
+		data.next.length > 0 ? `\n${escapeMarkup(data.next.join("\n"))}` : "";
 
-	return `${previousLyrics}<span color=\\"${tooltipColor}\\"><i>${escapeMarkup(data.current)}</i></span>${nextLyrics}`;
+	return `${previousLyrics}<span color="${tooltipColor}"><i>${escapeMarkup(data.current)}</i></span>${nextLyrics}`;
+}
+
+function getPlayer(skipPaused = false) {
+	let players;
+
+	try {
+		players = execSync("playerctl --list-all").toString().trim();
+	} catch (e) {
+		debugLog("Something went wrong while getting the list of players", e);
+
+		return null;
+	}
+
+	const playersList = players
+		.split("\n")
+		.map((player) => player.split(".").shift())
+		.filter((player) => {
+			if (config.ignoredPlayers?.includes(player)) return false;
+
+			return true;
+		})
+		.sort((a, b) => {
+			const aIsFavorite = config.favoritePlayers?.includes(a);
+			const bIsFavorite = config.favoritePlayers?.includes(b);
+			const aIsHated = config.hatedPlayers?.includes(a);
+			const bIsHated = config.hatedPlayers?.includes(b);
+
+			if (aIsFavorite && !bIsFavorite) return -1;
+			if (!aIsFavorite && bIsFavorite) return 1;
+
+			if (aIsHated && !bIsHated) return 1;
+			if (!aIsHated && bIsHated) return -1;
+
+			return 0;
+		});
+
+	debugLog("Avaible Players", playersList);
+
+	if (playersList.length <= 0) return null;
+
+	for (const player of playersList) {
+		if (!skipPaused) return player;
+
+		try {
+			const isPlaying =
+				execSync(`playerctl -p ${player} status`).toString().trim() ===
+				"Playing";
+
+			if (!isPlaying) continue;
+		} catch (e) {
+			continue;
+		}
+
+		return player;
+	}
+}
+
+function updateIcon(metadata) {
+	const url = metadata.iconUrl;
+	const iconPath = config.iconPath || path.join(configFolder, "icon.png");
+
+	if (!url) return null;
+
+	debugLog("Fetching song icon");
+	if (url.startsWith('https')) {
+    
+		try {
+				fetch(url)
+					.then((res) => res.arrayBuffer())
+					.then((data) => {
+						const buffer = Buffer.from(data);
+
+						const iconPath = config.iconPath || path.join(configFolder, "icon.png");
+
+						fs.writeFileSync(iconPath, buffer);
+					});
+			} catch (e) {
+				debugLog("Something went wrong while fetching the icon URL", e);
+		}
+
+	 } 
+	else if (url.startsWith('file://')) {
+			    const filePath = new URL(url).pathname; // Using URL to convert
+			    try {
+			      fs.copyFileSync(filePath, iconPath);
+			      debugLog(`Local file ${filePath} copied to ${artFilePath}`);
+			    } catch (error) {
+			      debugLog(`Error copying file: ${error.message}`);
+			    }
+				
+
+		return null;
+	}
+}
+
+function escapeMarkup(text) {
+	return text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function outputLog(...args) {
@@ -677,56 +711,201 @@ function outputLog(...args) {
 }
 
 function debugLog(...args) {
-	if (config.debug) console.debug("\x1b[35;1mDEBUG:\x1b[0m", ...args);
+	if (
+		config.debug ||
+		process.env.DEBUG?.toLowerCase() === "true" ||
+		process.argv.includes("--debug")
+	)
+		console.debug("\x1b[35;1mDEBUG:\x1b[0m", ...args);
 }
 
+function fetchPlayerctl() {
+	const player = getPlayer();
 
-async function downloadArt(artUrl, artFilePath, config) {
-  if (fs.existsSync(artFile)) {
-    fs.unlinkSync(artFile);
-  }
+	const fullPlayer = getPlayer(false);
 
-  if (artUrl.startsWith('https')) {
-    const file = fs.createWriteStream(artFile);
-    const request = fetch(artUrl, (response) => {
-      response.pipe(file);
-      file.on('finish', () => {
-        file.close();
-        const originalName = "cover.jpg";
-       // fs.renameSync(artFilePath, path.join(path.dirname(artFilePath), originalName));
-        debugLog(`Original ${originalName} downloaded and saved.`);
-      });
-    });
-  } else if (artUrl.startsWith('file://')) {
-    const filePath = new URL(artUrl).pathname; // Using URL to convert
-    try {
-      fs.copyFileSync(filePath, artFilePath);
-      debugLog(`Local file ${filePath} copied to ${artFilePath}`);
-    } catch (error) {
-      debugLog(`Error copying file: ${error.message}`);
-    }
-  } else {
-    throw new Error(`Invalid schema for ${artUrl}`);
-  }
+	if (!fullPlayer) deleteIcon();
 
-		const output = template
-			.replace("{{text}}", `<img src='${artFile}' style='width:28px;height:28px;'>`)
-			.replace("{{alt}}", 'none')
+	if (!player) return null;
 
-			.replace("{{tooltip}}",`<img src='${artFile}' style='width:32px;height:32px;'>`);
-	outputLog(output);
+	let rawMetadata;
+
+	try {
+		const args = [
+			"artist",
+			"album",
+			"title",
+			"mpris:trackid",
+			"mpris:length",
+			"mpris:artUrl",
+			"status",
+			"volume",
+			"position",
+		]
+			.map((arg) => `{{${arg}}}`)
+			.join("||||");
+
+		rawMetadata = execSync(`playerctl metadata -p ${player} --format "${args}"`)
+			.toString()
+			.trim()
+			.split("||||");
+	} catch (e) {
+		debugLog("Something went wrong while getting data from playerctl", e);
+
+		if (
+			["--artist", "--data", "--name", "-a", "-d", "-n"].some((arg) =>
+				process.argv.includes(arg),
+			)
+		) {
+			outputLog(noSong);
+
+			process.exit(0);
+		}
+
+		outputLog(noLyrics);
+
+		process.exit(0);
+	}
+
+	const metadata = {
+		artist: rawMetadata[0],
+		album: rawMetadata[1],
+		track: rawMetadata[2],
+		trackId: rawMetadata[3],
+		lengthMs: Number.parseFloat(rawMetadata[4]) / 1000,
+		iconUrl: rawMetadata[5],
+		playing: rawMetadata[6] === "Playing",
+		volume: Number.parseInt(rawMetadata[7] * 100),
+		currentMs: Number.parseFloat(rawMetadata[8]) / 1000 + 1,
+	};
+
+	const metadataTrackId = metadata.trackId.split("/").pop();
+
+	if (metadata.playing && currentTrackId !== metadataTrackId) {
+		updateIcon(metadata);
+
+		currentTrackId = metadataTrackId;
+	}
+
+	metadata.percentage = Math.round(
+		(metadata.currentMs / metadata.lengthMs) * 100,
+	);
+
+	debugLog("Metadata:", metadata);
+
+	return metadata;
 }
-async function downloadArtdelete(artUrl, artFilePath, config) {
-  if (fs.existsSync(artFile)) {
-    fs.unlinkSync(artFile);
-  }
 
+function updateConfig() {
+	if (!fs.existsSync(configFile))
+		fs.writeFileSync(configFile, JSON.stringify(config, null, 4));
+
+	const configFileContent = fs.readFileSync(configFile, "utf-8");
+
+	let newConfig = {};
+
+	try {
+		newConfig = JSON.parse(configFileContent);
+	} catch (e) {
+		debugLog("Config file is not a valid JSON");
+
+		process.exit(0);
+	}
+
+	if (newConfig.iconPath?.startsWith("./")) {
+		outputLog("\x1b[31mconfig.iconPath must be an absolute path");
+
+		process.exit(0);
+	}
+
+	if (
+		typeof newConfig.dataUpdateInterval === "number" &&
+		newConfig.dataUpdateInterval !== config.dataUpdateInterval &&
+		currentIntervalType === "data"
+	) {
+		debugLog("Restarting the data interval");
+
+		clearInterval(currentInterval);
+
+		currentInterval = setInterval(
+			returnData,
+			newConfig.dataUpdateInterval || 1000,
+		);
+	}
+
+	if (
+		typeof newConfig.artistUpdateInterval === "number" &&
+		newConfig.artistUpdateInterval !== config.artistUpdateInterval &&
+		currentIntervalType === "artist"
+	) {
+		debugLog("Restarting the artist interval");
+
+		clearInterval(currentInterval);
+
+		currentInterval = setInterval(
+			returnArtist,
+			newConfig.artistUpdateInterval || 1000,
+		);
+	}
+
+	if (
+		typeof newConfig.nameUpdateInterval === "number" &&
+		newConfig.nameUpdateInterval !== config.nameUpdateInterval &&
+		currentIntervalType === "name"
+	) {
+		debugLog("Restarting the name interval");
+
+		clearInterval(currentInterval);
+
+		currentInterval = setInterval(
+			returnName,
+			newConfig.nameUpdateInterval || 1000,
+		);
+	}
+
+	if (
+		typeof newConfig.lyricsUpdateInterval === "number" &&
+		newConfig.lyricsUpdateInterval !== config.lyricsUpdateInterval &&
+		currentIntervalType === "lyrics"
+	) {
+		debugLog("Restarting the lyrics interval");
+
+		clearInterval(currentInterval);
+
+		currentInterval = setInterval(
+			returnLyrics,
+			newConfig.lyricsUpdateInterval || 1000,
+		);
+	}
+
+	config = newConfig;
 }
 
-let currentPlayer = ""; 
+function marquee(text) {
+	if (text.length <= (config.marqueeMinLength || 40)) return text;
 
-function isPlayerChanged(newPlayer) {
-    const hasChanged = currentPlayer === "" || currentPlayer !== newPlayer;
-    currentPlayer = newPlayer;
-    return hasChanged;
+	if (text.length < currentMarqueeIndex) {
+		currentMarqueeIndex = 0;
+	}
+
+	const dividedText = `${text}   `;
+	const marqueeText =
+		dividedText.slice(currentMarqueeIndex) +
+		dividedText.slice(0, currentMarqueeIndex);
+
+	currentMarqueeIndex = (currentMarqueeIndex + 1) % dividedText.length;
+
+	return marqueeText.slice(0, 40);
+}
+
+function deleteIcon() {
+	currentTrackId = null;
+
+	const iconPath = config.iconPath || path.join(configFolder, "icon.png");
+
+	if (fs.existsSync(iconPath)) {
+		debugLog("Deleting the song icon");
+
+		fs.unlinkSync(iconPath);
+	}
 }
